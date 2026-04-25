@@ -42,7 +42,26 @@ interface Video {
   uploadedAt: number;
   quality: string;
   isAdult: boolean;
+  category: string;
 }
+
+const VIDEO_CATEGORIES = [
+  { id: "all", label: "Все", icon: "LayoutGrid" },
+  { id: "gaming", label: "Игры", icon: "Gamepad2" },
+  { id: "music", label: "Музыка", icon: "Music" },
+  { id: "sport", label: "Спорт", icon: "Trophy" },
+  { id: "education", label: "Обучение", icon: "GraduationCap" },
+  { id: "news", label: "Новости", icon: "Newspaper" },
+  { id: "comedy", label: "Юмор", icon: "Laugh" },
+  { id: "tech", label: "Технологии", icon: "Cpu" },
+  { id: "travel", label: "Путешествия", icon: "MapPin" },
+  { id: "food", label: "Еда", icon: "UtensilsCrossed" },
+  { id: "auto", label: "Авто", icon: "Car" },
+  { id: "beauty", label: "Красота", icon: "Sparkles" },
+  { id: "animals", label: "Животные", icon: "PawPrint" },
+  { id: "film", label: "Кино", icon: "Film" },
+  { id: "other", label: "Прочее", icon: "Layers" },
+];
 
 // ─── STORAGE ─────────────────────────────────────────────────────────────────
 
@@ -164,9 +183,7 @@ function Avatar({ src, name, size = 36 }: { src: string | null; name: string; si
 
 // ─── VIDEO PLAYER ────────────────────────────────────────────────────────────
 
-function VideoPlayer({ video, currentUser, onUpdate }: {
-  video: Video; currentUser: User | null; onUpdate: (v: Video) => void;
-}) {
+function VideoPlayer({ video }: { video: Video }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -177,32 +194,13 @@ function VideoPlayer({ video, currentUser, onUpdate }: {
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const viewCounted = useRef(false);
 
   const speeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
   useEffect(() => {
-    viewCounted.current = false;
-  }, [video.id]);
-
-  useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    const onTime = () => {
-      setCurrentTime(el.currentTime);
-      if (!viewCounted.current && el.currentTime > 5) {
-        if (currentUser) {
-          if (!video.viewedBy.includes(currentUser.id)) {
-            viewCounted.current = true;
-            onUpdate({ ...video, views: video.views + 1, viewedBy: [...video.viewedBy, currentUser.id] });
-          }
-        } else {
-          // guest: count once per session via ref
-          viewCounted.current = true;
-          onUpdate({ ...video, views: video.views + 1 });
-        }
-      }
-    };
+    const onTime = () => setCurrentTime(el.currentTime);
     const onDur = () => setDuration(el.duration);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
@@ -216,7 +214,7 @@ function VideoPlayer({ video, currentUser, onUpdate }: {
       el.removeEventListener("play", onPlay);
       el.removeEventListener("pause", onPause);
     };
-  }, [video, currentUser, onUpdate]);
+  }, [video.id]);
 
   const togglePlay = () => {
     const el = videoRef.current;
@@ -334,6 +332,15 @@ function VideoCard({ video, onClick }: { video: Video; onClick: () => void }) {
           <p className="text-xs" style={{ color: "var(--yuvist-muted)" }}>
             {formatViews(video.views)} просм. · {timeAgo(video.uploadedAt)}
           </p>
+          {video.category && video.category !== "other" && (() => {
+            const cat = VIDEO_CATEGORIES.find(c => c.id === video.category);
+            return cat ? (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded mt-1"
+                style={{ background: "var(--yuvist-surface2)", color: "var(--yuvist-muted)", border: "1px solid var(--yuvist-border)" }}>
+                {cat.label}
+              </span>
+            ) : null;
+          })()}
         </div>
       </div>
     </div>
@@ -348,6 +355,7 @@ function UploadModal({ currentUser, onClose, onUpload }: {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [quality, setQuality] = useState("1080p");
+  const [category, setCategory] = useState("other");
   const [isAdult, setIsAdult] = useState(false);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [thumbFile, setThumbFile] = useState<File | null>(null);
@@ -396,7 +404,7 @@ function UploadModal({ currentUser, onClose, onUpload }: {
         authorId: currentUser.id, authorName: currentUser.username, authorAvatar: currentUser.avatar,
         url: finalVideoUrl, thumbnail: thumbFile ? thumbUrl : null,
         views: 0, viewedBy: [], likes: [], dislikes: [], comments: [],
-        duration: durationRef.current, uploadedAt: Date.now(), quality, isAdult,
+        duration: durationRef.current, uploadedAt: Date.now(), quality, isAdult, category,
       };
       onUpload(newVideo);
       setLoading(false);
@@ -451,6 +459,19 @@ function UploadModal({ currentUser, onClose, onUpload }: {
               <option value="1080p">1080p Full HD</option>
               <option value="4K">4K Ultra HD</option>
             </select>
+          </div>
+          <div>
+            <label className="block text-sm mb-2 font-medium" style={{ color: "var(--yuvist-muted)" }}>Категория</label>
+            <div className="flex flex-wrap gap-2">
+              {VIDEO_CATEGORIES.filter(c => c.id !== "all").map(cat => (
+                <button key={cat.id} type="button" onClick={() => setCategory(cat.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                  style={{ background: category === cat.id ? "var(--yuvist-red)" : "var(--yuvist-surface2)", color: category === cat.id ? "#fff" : "var(--yuvist-muted)", border: `1px solid ${category === cat.id ? "var(--yuvist-red)" : "var(--yuvist-border)"}` }}>
+                  <Icon name={cat.icon as "Film"} size={13} />
+                  {cat.label}
+                </button>
+              ))}
+            </div>
           </div>
           <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl" style={{ background: "var(--yuvist-surface2)", border: "1px solid var(--yuvist-border)" }}>
             <div onClick={() => setIsAdult(!isAdult)} className="w-5 h-5 rounded flex items-center justify-center transition-all"
@@ -566,7 +587,20 @@ function VideoPage({ video: initialVideo, currentUser, allVideos, onUpdate, onCh
   const [commentText, setCommentText] = useState("");
 
   const handleUpdate = useCallback((v: Video) => { setVideo(v); onUpdate(v); }, [onUpdate]);
-  useEffect(() => { setVideo(initialVideo); }, [initialVideo.id]);
+
+  // Засчитываем просмотр при открытии страницы — 1 раз на аккаунт
+  useEffect(() => {
+    setVideo(initialVideo);
+    const uid = currentUser?.id;
+    if (uid && !initialVideo.viewedBy.includes(uid)) {
+      const updated = { ...initialVideo, views: initialVideo.views + 1, viewedBy: [...initialVideo.viewedBy, uid] };
+      setVideo(updated);
+      onUpdate(updated);
+    } else if (!uid) {
+      // гость: просто показываем без счётчика
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialVideo.id]);
 
   const toggleLike = () => {
     if (!currentUser) return;
@@ -602,7 +636,7 @@ function VideoPage({ video: initialVideo, currentUser, allVideos, onUpdate, onCh
   return (
     <div className="flex gap-6 animate-fade-in">
       <div className="flex-1 min-w-0">
-        <VideoPlayer video={video} currentUser={currentUser} onUpdate={handleUpdate} />
+        <VideoPlayer video={video} />
         <div className="mt-4">
           <div className="flex items-start gap-2 flex-wrap">
             <h1 className="text-xl font-bold leading-snug flex-1" style={{ color: "var(--yuvist-text)" }}>{video.title}</h1>
@@ -610,6 +644,17 @@ function VideoPage({ video: initialVideo, currentUser, allVideos, onUpdate, onCh
               <span className="text-xs font-bold px-2 py-0.5 rounded flex-shrink-0" style={{ background: "#b71c1c", color: "#fff" }}>18+</span>
             )}
           </div>
+          {video.category && (() => {
+            const cat = VIDEO_CATEGORIES.find(c => c.id === video.category);
+            return cat && cat.id !== "other" ? (
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <button className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all hover:opacity-80"
+                  style={{ background: "rgba(229,57,53,.1)", color: "var(--yuvist-red)", border: "1px solid rgba(229,57,53,.2)" }}>
+                  <Icon name={cat.icon as "Film"} size={12} />{cat.label}
+                </button>
+              </div>
+            ) : null;
+          })()}
           <div className="flex items-center justify-between mt-3 flex-wrap gap-3">
             <div className="flex items-center gap-3">
               <button onClick={() => onChannelClick(video.authorId)} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
@@ -1088,6 +1133,7 @@ export default function Index() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchActive, setSearchActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState("all");
 
   useEffect(() => {
     document.body.classList.toggle("light-theme", theme === "light");
@@ -1289,7 +1335,18 @@ export default function Index() {
             <>
               {currentPageId === "home" && (
                 <div className="animate-fade-in">
-                  <h2 className="text-lg font-bold mb-5" style={{ color: "var(--yuvist-text)" }}>Главная</h2>
+                  {/* Category filter bar */}
+                  <div className="flex gap-2 mb-5 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+                    {VIDEO_CATEGORIES.map(cat => (
+                      <button key={cat.id} onClick={() => setActiveCategory(cat.id)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all flex-shrink-0"
+                        style={{ background: activeCategory === cat.id ? "var(--yuvist-red)" : "var(--yuvist-surface)", color: activeCategory === cat.id ? "#fff" : "var(--yuvist-muted)", border: `1px solid ${activeCategory === cat.id ? "var(--yuvist-red)" : "var(--yuvist-border)"}` }}>
+                        <Icon name={cat.icon as "Home"} size={14} />
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+
                   {videos.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-24 text-center">
                       <div className="w-24 h-24 rounded-full flex items-center justify-center mb-5" style={{ background: "var(--yuvist-surface)" }}>
@@ -1302,11 +1359,19 @@ export default function Index() {
                         : <button onClick={() => setShowAuth(true)} className="yuvist-btn">Войти и загрузить</button>
                       }
                     </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {videos.map(v => <VideoCard key={v.id} video={v} onClick={() => handleVideoClick(v)} />)}
-                    </div>
-                  )}
+                  ) : (() => {
+                    const filtered = activeCategory === "all" ? videos : videos.filter(v => (v.category || "other") === activeCategory);
+                    return filtered.length === 0 ? (
+                      <div className="py-16 text-center">
+                        <Icon name="Filter" size={48} style={{ color: "var(--yuvist-muted)", margin: "0 auto 12px" }} />
+                        <p style={{ color: "var(--yuvist-muted)" }}>В этой категории пока нет видео</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {filtered.map(v => <VideoCard key={v.id} video={v} onClick={() => handleVideoClick(v)} />)}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
