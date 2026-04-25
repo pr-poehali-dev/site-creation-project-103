@@ -11,6 +11,7 @@ interface User {
   avatar: string | null;
   bio: string;
   donateLink: string;
+  donateQrImage: string | null;
   createdAt: number;
 }
 
@@ -40,6 +41,7 @@ interface Video {
   duration: string;
   uploadedAt: number;
   quality: string;
+  isAdult: boolean;
 }
 
 // ─── STORAGE ─────────────────────────────────────────────────────────────────
@@ -63,6 +65,31 @@ function load<T>(key: string, fallback: T): T {
 }
 function save(key: string, value: unknown) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+// ─── CENSORSHIP ───────────────────────────────────────────────────────────────
+
+const BAD_WORDS = [
+  "блять","блядь","блядина","блядский","пизда","пиздец","пиздеть","пиздёж",
+  "ёбаный","ёбать","ёб","ёбнуть","еблан","ёбла","ёбнутый","ебать","ебло",
+  "ёбаный","ебаный","хуй","хуйня","хуета","хуесос","хуйло","пиздёж",
+  "сука","суки","сучка","сучий","мудак","мудаки","мудацкий","мудозвон",
+  "залупа","залупиться","ёпта","ёпт","нахуй","нахер","похуй","похер",
+  "пиздануть","пиздатый","охуеть","охуенный","ахуеть","ахуенно","ебанько",
+  "ёбнутый","заебал","заебись","заебать","долбоёб","долбоеб","шлюха","шлюхи",
+  "whore","fuck","fucking","shit","bitch","cunt","dick","cock","ass","asshole",
+  "motherfucker","nigger","faggot","bastard","pussy","dumbass",
+];
+
+function censorText(text: string): string {
+  let result = text;
+  BAD_WORDS.forEach(word => {
+    const regex = new RegExp(word, "gi");
+    if (regex.test(result)) {
+      result = result.replace(regex, m => m[0] + "*".repeat(m.length - 1));
+    }
+  });
+  return result;
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -96,8 +123,20 @@ function timeAgo(ts: number): string {
   return "только что";
 }
 
+function formatDate(ts: number): string {
+  return new Date(ts).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+}
+
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target?.result as string);
+    reader.readAsDataURL(file);
+  });
 }
 
 // ─── AVATAR ──────────────────────────────────────────────────────────────────
@@ -107,22 +146,17 @@ function Avatar({ src, name, size = 36 }: { src: string | null; name: string; si
   const color = colors[name.charCodeAt(0) % colors.length];
   if (src) {
     return (
-      <img
-        src={src}
-        alt={name}
+      <img src={src} alt={name}
         style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
       />
     );
   }
   return (
-    <div
-      style={{
-        width: size, height: size, borderRadius: "50%", background: color,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        color: "#fff", fontWeight: 700, fontSize: size * 0.4,
-        flexShrink: 0, fontFamily: "Golos Text",
-      }}
-    >
+    <div style={{
+      width: size, height: size, borderRadius: "50%", background: color,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      color: "#fff", fontWeight: 700, fontSize: size * 0.4, flexShrink: 0, fontFamily: "Golos Text",
+    }}>
       {name.charAt(0).toUpperCase()}
     </div>
   );
@@ -130,9 +164,7 @@ function Avatar({ src, name, size = 36 }: { src: string | null; name: string; si
 
 // ─── VIDEO PLAYER ────────────────────────────────────────────────────────────
 
-function VideoPlayer({
-  video, currentUser, onUpdate,
-}: {
+function VideoPlayer({ video, currentUser, onUpdate }: {
   video: Video; currentUser: User | null; onUpdate: (v: Video) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -150,16 +182,24 @@ function VideoPlayer({
   const speeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
   useEffect(() => {
+    viewCounted.current = false;
+  }, [video.id]);
+
+  useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     const onTime = () => {
       setCurrentTime(el.currentTime);
-      if (!viewCounted.current && el.currentTime > 5 && currentUser) {
-        const uid = currentUser.id;
-        if (!video.viewedBy.includes(uid)) {
+      if (!viewCounted.current && el.currentTime > 5) {
+        if (currentUser) {
+          if (!video.viewedBy.includes(currentUser.id)) {
+            viewCounted.current = true;
+            onUpdate({ ...video, views: video.views + 1, viewedBy: [...video.viewedBy, currentUser.id] });
+          }
+        } else {
+          // guest: count once per session via ref
           viewCounted.current = true;
-          const updated = { ...video, views: video.views + 1, viewedBy: [...video.viewedBy, uid] };
-          onUpdate(updated);
+          onUpdate({ ...video, views: video.views + 1 });
         }
       }
     };
@@ -192,16 +232,14 @@ function VideoPlayer({
 
   const setVol = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value);
-    setVolume(v);
+    setVolume(v); setMuted(v === 0);
     if (videoRef.current) videoRef.current.volume = v;
-    setMuted(v === 0);
   };
 
   const toggleMute = () => {
     const el = videoRef.current;
     if (!el) return;
-    el.muted = !muted;
-    setMuted(!muted);
+    el.muted = !muted; setMuted(!muted);
   };
 
   const changeSpeed = (s: number) => {
@@ -213,33 +251,17 @@ function VideoPlayer({
   const handleMouseMove = () => {
     setShowControls(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => {
-      if (playing) setShowControls(false);
-    }, 3000);
+    hideTimer.current = setTimeout(() => { if (playing) setShowControls(false); }, 3000);
   };
 
   return (
-    <div
-      className="relative bg-black rounded-xl overflow-hidden"
-      style={{ aspectRatio: "16/9" }}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => playing && setShowControls(false)}
-    >
+    <div className="relative bg-black rounded-xl overflow-hidden" style={{ aspectRatio: "16/9" }}
+      onMouseMove={handleMouseMove} onMouseLeave={() => playing && setShowControls(false)}>
       <video ref={videoRef} src={video.url} className="w-full h-full" onClick={togglePlay} style={{ cursor: "pointer" }} />
-
-      <div
-        className="absolute bottom-0 left-0 right-0 transition-opacity duration-300"
-        style={{
-          opacity: showControls ? 1 : 0,
-          background: "linear-gradient(transparent, rgba(0,0,0,0.85))",
-          padding: "24px 16px 12px",
-        }}
-      >
-        <input
-          type="range" min={0} max={duration || 100} value={currentTime} step={0.1} onChange={seek}
-          className="w-full mb-2"
-          style={{ accentColor: "var(--yuvist-red)", height: 4, cursor: "pointer" }}
-        />
+      <div className="absolute bottom-0 left-0 right-0 transition-opacity duration-300"
+        style={{ opacity: showControls ? 1 : 0, background: "linear-gradient(transparent,rgba(0,0,0,.85))", padding: "24px 16px 12px" }}>
+        <input type="range" min={0} max={duration || 100} value={currentTime} step={0.1} onChange={seek}
+          className="w-full mb-2" style={{ accentColor: "var(--yuvist-red)", height: 4, cursor: "pointer" }} />
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <button onClick={togglePlay} className="text-white hover:text-red-400 transition-colors">
@@ -249,34 +271,24 @@ function VideoPlayer({
               <button onClick={toggleMute} className="text-white hover:text-red-400 transition-colors">
                 <Icon name={muted || volume === 0 ? "VolumeX" : "Volume2"} size={18} />
               </button>
-              <input
-                type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={setVol}
-                style={{ width: 70, accentColor: "var(--yuvist-red)", cursor: "pointer" }}
-              />
+              <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={setVol}
+                style={{ width: 70, accentColor: "var(--yuvist-red)", cursor: "pointer" }} />
             </div>
-            <span className="text-white text-xs opacity-80">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </span>
+            <span className="text-white text-xs opacity-80">{formatTime(currentTime)} / {formatTime(duration)}</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-white text-xs opacity-60 border border-white/20 px-2 py-0.5 rounded">
-              {video.quality}
-            </span>
+            <span className="text-white text-xs opacity-60 border border-white/20 px-2 py-0.5 rounded">{video.quality}</span>
             <div className="relative">
-              <button
-                onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-                className="text-white text-xs opacity-80 hover:opacity-100 border border-white/20 px-2 py-0.5 rounded transition-opacity"
-              >
+              <button onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+                className="text-white text-xs opacity-80 hover:opacity-100 border border-white/20 px-2 py-0.5 rounded">
                 {speed}x
               </button>
               {showSpeedMenu && (
                 <div className="absolute bottom-8 right-0 yuvist-card py-1 z-50 min-w-[80px]">
                   {speeds.map(s => (
-                    <button
-                      key={s} onClick={() => changeSpeed(s)}
+                    <button key={s} onClick={() => changeSpeed(s)}
                       className="w-full text-left px-3 py-1.5 text-sm hover:bg-white/10 transition-colors"
-                      style={{ color: s === speed ? "var(--yuvist-red)" : "var(--yuvist-text)" }}
-                    >
+                      style={{ color: s === speed ? "var(--yuvist-red)" : "var(--yuvist-text)" }}>
                       {s}x
                     </button>
                   ))}
@@ -303,12 +315,14 @@ function VideoCard({ video, onClick }: { video: Video; onClick: () => void }) {
             <Icon name="Play" size={40} style={{ color: "var(--yuvist-muted)" }} />
           </div>
         )}
-        <span
-          className="absolute bottom-2 right-2 text-white text-xs font-semibold px-1.5 py-0.5 rounded"
-          style={{ background: "rgba(0,0,0,0.8)" }}
-        >
+        <span className="absolute bottom-2 right-2 text-white text-xs font-semibold px-1.5 py-0.5 rounded"
+          style={{ background: "rgba(0,0,0,0.8)" }}>
           {video.duration || "0:00"}
         </span>
+        {video.isAdult && (
+          <span className="absolute top-2 left-2 text-white text-xs font-bold px-1.5 py-0.5 rounded"
+            style={{ background: "#b71c1c" }}>18+</span>
+        )}
       </div>
       <div className="mt-2 flex gap-2">
         <Avatar src={video.authorAvatar} name={video.authorName} size={32} />
@@ -328,18 +342,17 @@ function VideoCard({ video, onClick }: { video: Video; onClick: () => void }) {
 
 // ─── UPLOAD MODAL ────────────────────────────────────────────────────────────
 
-function UploadModal({
-  currentUser, onClose, onUpload,
-}: {
+function UploadModal({ currentUser, onClose, onUpload }: {
   currentUser: User; onClose: () => void; onUpload: (v: Video) => void;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [quality, setQuality] = useState("1080p");
+  const [isAdult, setIsAdult] = useState(false);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [thumbFile, setThumbFile] = useState<File | null>(null);
-  const [videoUrl, setVideoUrl] = useState("");
   const [thumbUrl, setThumbUrl] = useState("");
+  const [videoObjectUrl, setVideoObjectUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const durationRef = useRef("0:00");
@@ -349,14 +362,12 @@ function UploadModal({
     if (!f) return;
     setVideoFile(f);
     const url = URL.createObjectURL(f);
-    setVideoUrl(url);
+    setVideoObjectUrl(url);
     const vid = document.createElement("video");
     vid.src = url;
     vid.onloadedmetadata = () => {
       const d = vid.duration;
-      const h = Math.floor(d / 3600);
-      const m = Math.floor((d % 3600) / 60);
-      const s = Math.floor(d % 60);
+      const h = Math.floor(d / 3600), m = Math.floor((d % 3600) / 60), s = Math.floor(d % 60);
       durationRef.current = h > 0
         ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
         : `${m}:${String(s).padStart(2, "0")}`;
@@ -369,74 +380,42 @@ function UploadModal({
     if (!f) return;
     setThumbFile(f);
     const reader = new FileReader();
-    reader.onload = (ev) => setThumbUrl(ev.target?.result as string);
+    reader.onload = ev => setThumbUrl(ev.target?.result as string);
     reader.readAsDataURL(f);
   };
 
   const handleSubmit = () => {
     if (!title.trim()) { setError("Введите название видео"); return; }
-    if (!videoUrl) { setError("Загрузите видео файл"); return; }
+    if (!videoFile) { setError("Загрузите видео файл"); return; }
     setLoading(true);
-
-    const readFile = (file: File): Promise<string> =>
-      new Promise(resolve => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.readAsDataURL(file);
-      });
-
     (async () => {
-      const finalVideoUrl = videoFile ? await readFile(videoFile) : videoUrl;
-      const finalThumb = thumbFile ? thumbUrl : null;
-
+      const finalVideoUrl = await readFileAsDataUrl(videoFile);
       const newVideo: Video = {
         id: generateId(),
-        title: title.trim(),
-        description: description.trim(),
-        authorId: currentUser.id,
-        authorName: currentUser.username,
-        authorAvatar: currentUser.avatar,
-        url: finalVideoUrl,
-        thumbnail: finalThumb,
-        views: 0,
-        viewedBy: [],
-        likes: [],
-        dislikes: [],
-        comments: [],
-        duration: durationRef.current,
-        uploadedAt: Date.now(),
-        quality,
+        title: title.trim(), description: description.trim(),
+        authorId: currentUser.id, authorName: currentUser.username, authorAvatar: currentUser.avatar,
+        url: finalVideoUrl, thumbnail: thumbFile ? thumbUrl : null,
+        views: 0, viewedBy: [], likes: [], dislikes: [], comments: [],
+        duration: durationRef.current, uploadedAt: Date.now(), quality, isAdult,
       };
       onUpload(newVideo);
       setLoading(false);
     })();
+    void videoObjectUrl;
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
-      style={{ background: "rgba(0,0,0,0.8)" }}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in" style={{ background: "rgba(0,0,0,0.8)" }}>
       <div className="yuvist-card p-6 w-full max-w-lg mx-4 animate-scale-in max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold" style={{ color: "var(--yuvist-text)" }}>Загрузить видео</h2>
-          <button onClick={onClose} style={{ color: "var(--yuvist-muted)" }} className="hover:text-white transition-colors">
-            <Icon name="X" size={20} />
-          </button>
+          <button onClick={onClose} style={{ color: "var(--yuvist-muted)" }}><Icon name="X" size={20} /></button>
         </div>
-
         <div className="space-y-4">
           <div>
-            <label className="block text-sm mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>
-              Видео файл *
-            </label>
-            <label
-              className="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed cursor-pointer transition-colors hover:border-red-500"
-              style={{
-                borderColor: videoFile ? "var(--yuvist-red)" : "var(--yuvist-border)",
-                padding: "20px", background: "var(--yuvist-surface2)",
-              }}
-            >
+            <label className="block text-sm mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>Видео файл *</label>
+            <label className="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed cursor-pointer hover:border-red-500 transition-colors"
+              style={{ borderColor: videoFile ? "var(--yuvist-red)" : "var(--yuvist-border)", padding: "20px", background: "var(--yuvist-surface2)" }}>
               <Icon name="Upload" size={22} style={{ color: videoFile ? "var(--yuvist-red)" : "var(--yuvist-muted)" }} />
               <span className="text-sm" style={{ color: videoFile ? "var(--yuvist-text)" : "var(--yuvist-muted)" }}>
                 {videoFile ? videoFile.name : "Нажмите для выбора видео"}
@@ -444,43 +423,25 @@ function UploadModal({
               <input type="file" accept="video/*" onChange={handleVideoFile} className="hidden" />
             </label>
           </div>
-
           <div>
-            <label className="block text-sm mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>
-              Превью (обложка)
-            </label>
-            <label
-              className="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed cursor-pointer transition-colors hover:border-red-500"
-              style={{
-                borderColor: thumbFile ? "var(--yuvist-red)" : "var(--yuvist-border)",
-                padding: "14px", background: "var(--yuvist-surface2)",
-              }}
-            >
-              {thumbUrl
-                ? <img src={thumbUrl} className="w-16 h-10 object-cover rounded" alt="thumb" />
-                : <Icon name="Image" size={20} style={{ color: "var(--yuvist-muted)" }} />
-              }
+            <label className="block text-sm mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>Превью (обложка)</label>
+            <label className="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed cursor-pointer hover:border-red-500 transition-colors"
+              style={{ borderColor: thumbFile ? "var(--yuvist-red)" : "var(--yuvist-border)", padding: "14px", background: "var(--yuvist-surface2)" }}>
+              {thumbUrl ? <img src={thumbUrl} className="w-16 h-10 object-cover rounded" alt="thumb" /> : <Icon name="Image" size={20} style={{ color: "var(--yuvist-muted)" }} />}
               <span className="text-sm" style={{ color: thumbFile ? "var(--yuvist-text)" : "var(--yuvist-muted)" }}>
                 {thumbFile ? thumbFile.name : "Загрузить обложку"}
               </span>
               <input type="file" accept="image/*" onChange={handleThumb} className="hidden" />
             </label>
           </div>
-
           <div>
             <label className="block text-sm mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>Название *</label>
             <input className="yuvist-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Введите название видео" />
           </div>
-
           <div>
             <label className="block text-sm mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>Описание</label>
-            <textarea
-              className="yuvist-input resize-none" rows={3}
-              value={description} onChange={e => setDescription(e.target.value)}
-              placeholder="Расскажите о видео..."
-            />
+            <textarea className="yuvist-input resize-none" rows={3} value={description} onChange={e => setDescription(e.target.value)} placeholder="Расскажите о видео..." />
           </div>
-
           <div>
             <label className="block text-sm mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>Качество</label>
             <select className="yuvist-input" value={quality} onChange={e => setQuality(e.target.value)}>
@@ -491,9 +452,19 @@ function UploadModal({
               <option value="4K">4K Ultra HD</option>
             </select>
           </div>
-
+          <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl" style={{ background: "var(--yuvist-surface2)", border: "1px solid var(--yuvist-border)" }}>
+            <div onClick={() => setIsAdult(!isAdult)} className="w-5 h-5 rounded flex items-center justify-center transition-all"
+              style={{ background: isAdult ? "#b71c1c" : "var(--yuvist-border)", border: `2px solid ${isAdult ? "#b71c1c" : "var(--yuvist-muted)"}` }}>
+              {isAdult && <Icon name="Check" size={12} style={{ color: "#fff" }} />}
+            </div>
+            <div>
+              <span className="text-sm font-semibold" style={{ color: "var(--yuvist-text)" }}>
+                Видео содержит контент 18+
+              </span>
+              <p className="text-xs" style={{ color: "var(--yuvist-muted)" }}>На карточке будет отображаться метка 18+</p>
+            </div>
+          </label>
           {error && <p className="text-sm text-red-400">{error}</p>}
-
           <button onClick={handleSubmit} disabled={loading} className="yuvist-btn w-full" style={{ opacity: loading ? 0.7 : 1 }}>
             {loading ? "Загрузка..." : "Опубликовать"}
           </button>
@@ -516,110 +487,69 @@ function AuthModal({ onAuth, onClose }: { onAuth: (u: User) => void; onClose: ()
   const handleSubmit = () => {
     setError("");
     const users: User[] = load(STORAGE_KEYS.users, []);
-
     if (mode === "register") {
       if (!username.trim() || !email.trim() || !password) { setError("Заполните все поля"); return; }
-      if (password.length < 6) { setError("Пароль должен быть не менее 6 символов"); return; }
+      if (password.length < 6) { setError("Пароль — минимум 6 символов"); return; }
       if (password !== confirm) { setError("Пароли не совпадают"); return; }
       if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) { setError("Неверный формат email"); return; }
-      if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
-        setError("Этот логин уже занят"); return;
-      }
-      if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-        setError("Этот email уже зарегистрирован"); return;
-      }
+      if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) { setError("Логин уже занят"); return; }
+      if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) { setError("Email уже зарегистрирован"); return; }
       const newUser: User = {
-        id: generateId(), username: username.trim(), email: email.trim(),
-        password, avatar: null, bio: "", donateLink: "", createdAt: Date.now(),
+        id: generateId(), username: username.trim(), email: email.trim(), password,
+        avatar: null, bio: "", donateLink: "", donateQrImage: null, createdAt: Date.now(),
       };
       save(STORAGE_KEYS.users, [...users, newUser]);
       onAuth(newUser);
     } else {
       if (!username.trim() || !password) { setError("Заполните все поля"); return; }
-      const user = users.find(
-        u => u.username.toLowerCase() === username.toLowerCase() && u.password === password
-      );
+      const user = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
       if (!user) { setError("Неверный логин или пароль"); return; }
       onAuth(user);
     }
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
-      style={{ background: "rgba(0,0,0,0.85)" }}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in" style={{ background: "rgba(0,0,0,0.85)" }}>
       <div className="yuvist-card p-7 w-full max-w-sm mx-4 animate-scale-in">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-2xl font-black" style={{ color: "var(--yuvist-red)", fontFamily: "Golos Text" }}>
-                ЮВИСТ
-              </span>
-            </div>
-            <p className="text-sm" style={{ color: "var(--yuvist-muted)" }}>
-              {mode === "login" ? "Войдите в аккаунт" : "Создайте аккаунт"}
-            </p>
+            <span className="text-2xl font-black" style={{ color: "var(--yuvist-red)", fontFamily: "Golos Text" }}>ЮВИСТ</span>
+            <p className="text-sm mt-0.5" style={{ color: "var(--yuvist-muted)" }}>{mode === "login" ? "Войдите в аккаунт" : "Создайте аккаунт"}</p>
           </div>
-          <button onClick={onClose} style={{ color: "var(--yuvist-muted)" }}>
-            <Icon name="X" size={20} />
-          </button>
+          <button onClick={onClose} style={{ color: "var(--yuvist-muted)" }}><Icon name="X" size={20} /></button>
         </div>
-
         <div className="flex gap-1 mb-5 p-1 rounded-lg" style={{ background: "var(--yuvist-surface2)" }}>
           {(["login", "register"] as const).map(m => (
-            <button
-              key={m} onClick={() => { setMode(m); setError(""); }}
+            <button key={m} onClick={() => { setMode(m); setError(""); }}
               className="flex-1 py-2 rounded-md text-sm font-semibold transition-all"
-              style={{
-                background: mode === m ? "var(--yuvist-red)" : "transparent",
-                color: mode === m ? "#fff" : "var(--yuvist-muted)",
-              }}
-            >
+              style={{ background: mode === m ? "var(--yuvist-red)" : "transparent", color: mode === m ? "#fff" : "var(--yuvist-muted)" }}>
               {m === "login" ? "Войти" : "Регистрация"}
             </button>
           ))}
         </div>
-
         <div className="space-y-3">
           <div>
             <label className="block text-xs mb-1 font-medium" style={{ color: "var(--yuvist-muted)" }}>Логин</label>
-            <input
-              className="yuvist-input" value={username} onChange={e => setUsername(e.target.value)}
-              placeholder="Введите логин" onKeyDown={e => e.key === "Enter" && handleSubmit()}
-            />
+            <input className="yuvist-input" value={username} onChange={e => setUsername(e.target.value)} placeholder="Введите логин" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
           </div>
           {mode === "register" && (
             <div>
               <label className="block text-xs mb-1 font-medium" style={{ color: "var(--yuvist-muted)" }}>Email</label>
-              <input
-                className="yuvist-input" type="email" value={email} onChange={e => setEmail(e.target.value)}
-                placeholder="your@email.com" onKeyDown={e => e.key === "Enter" && handleSubmit()}
-              />
+              <input className="yuvist-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
             </div>
           )}
           <div>
             <label className="block text-xs mb-1 font-medium" style={{ color: "var(--yuvist-muted)" }}>Пароль</label>
-            <input
-              className="yuvist-input" type="password" value={password} onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()}
-            />
+            <input className="yuvist-input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
           </div>
           {mode === "register" && (
             <div>
-              <label className="block text-xs mb-1 font-medium" style={{ color: "var(--yuvist-muted)" }}>
-                Подтвердите пароль
-              </label>
-              <input
-                className="yuvist-input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
-                placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()}
-              />
+              <label className="block text-xs mb-1 font-medium" style={{ color: "var(--yuvist-muted)" }}>Подтвердите пароль</label>
+              <input className="yuvist-input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
             </div>
           )}
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <button onClick={handleSubmit} className="yuvist-btn w-full mt-2">
-            {mode === "login" ? "Войти" : "Создать аккаунт"}
-          </button>
+          <button onClick={handleSubmit} className="yuvist-btn w-full mt-2">{mode === "login" ? "Войти" : "Создать аккаунт"}</button>
         </div>
       </div>
     </div>
@@ -628,57 +558,40 @@ function AuthModal({ onAuth, onClose }: { onAuth: (u: User) => void; onClose: ()
 
 // ─── VIDEO PAGE ───────────────────────────────────────────────────────────────
 
-function VideoPage({
-  video: initialVideo, currentUser, allVideos, onUpdate, onChannelClick, onSponsor,
-}: {
+function VideoPage({ video: initialVideo, currentUser, allVideos, onUpdate, onChannelClick, onSponsor }: {
   video: Video; currentUser: User | null; allVideos: Video[];
-  onUpdate: (v: Video) => void;
-  onChannelClick: (authorId: string) => void;
-  onSponsor: (authorId: string) => void;
+  onUpdate: (v: Video) => void; onChannelClick: (id: string) => void; onSponsor: (id: string) => void;
 }) {
   const [video, setVideo] = useState(initialVideo);
   const [commentText, setCommentText] = useState("");
 
-  const handleUpdate = useCallback(
-    (v: Video) => { setVideo(v); onUpdate(v); },
-    [onUpdate]
-  );
-
-  useEffect(() => { setVideo(initialVideo); }, [initialVideo.id, initialVideo]);
+  const handleUpdate = useCallback((v: Video) => { setVideo(v); onUpdate(v); }, [onUpdate]);
+  useEffect(() => { setVideo(initialVideo); }, [initialVideo.id]);
 
   const toggleLike = () => {
     if (!currentUser) return;
     const uid = currentUser.id;
-    let likes = [...video.likes];
-    let dislikes = [...video.dislikes];
-    if (likes.includes(uid)) {
-      likes = likes.filter(x => x !== uid);
-    } else {
-      likes = [...likes, uid];
-      dislikes = dislikes.filter(x => x !== uid);
-    }
+    let likes = [...video.likes], dislikes = [...video.dislikes];
+    if (likes.includes(uid)) { likes = likes.filter(x => x !== uid); }
+    else { likes = [...likes, uid]; dislikes = dislikes.filter(x => x !== uid); }
     handleUpdate({ ...video, likes, dislikes });
   };
 
   const toggleDislike = () => {
     if (!currentUser) return;
     const uid = currentUser.id;
-    let likes = [...video.likes];
-    let dislikes = [...video.dislikes];
-    if (dislikes.includes(uid)) {
-      dislikes = dislikes.filter(x => x !== uid);
-    } else {
-      dislikes = [...dislikes, uid];
-      likes = likes.filter(x => x !== uid);
-    }
+    let likes = [...video.likes], dislikes = [...video.dislikes];
+    if (dislikes.includes(uid)) { dislikes = dislikes.filter(x => x !== uid); }
+    else { dislikes = [...dislikes, uid]; likes = likes.filter(x => x !== uid); }
     handleUpdate({ ...video, likes, dislikes });
   };
 
   const addComment = () => {
     if (!currentUser || !commentText.trim()) return;
+    const censored = censorText(commentText.trim());
     const c: Comment = {
       id: generateId(), userId: currentUser.id, username: currentUser.username,
-      userAvatar: currentUser.avatar, text: commentText.trim(), createdAt: Date.now(),
+      userAvatar: currentUser.avatar, text: censored, createdAt: Date.now(),
     };
     handleUpdate({ ...video, comments: [c, ...video.comments] });
     setCommentText("");
@@ -690,96 +603,61 @@ function VideoPage({
     <div className="flex gap-6 animate-fade-in">
       <div className="flex-1 min-w-0">
         <VideoPlayer video={video} currentUser={currentUser} onUpdate={handleUpdate} />
-
         <div className="mt-4">
-          <h1 className="text-xl font-bold leading-snug" style={{ color: "var(--yuvist-text)" }}>
-            {video.title}
-          </h1>
+          <div className="flex items-start gap-2 flex-wrap">
+            <h1 className="text-xl font-bold leading-snug flex-1" style={{ color: "var(--yuvist-text)" }}>{video.title}</h1>
+            {video.isAdult && (
+              <span className="text-xs font-bold px-2 py-0.5 rounded flex-shrink-0" style={{ background: "#b71c1c", color: "#fff" }}>18+</span>
+            )}
+          </div>
           <div className="flex items-center justify-between mt-3 flex-wrap gap-3">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => onChannelClick(video.authorId)}
-                className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-              >
+              <button onClick={() => onChannelClick(video.authorId)} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
                 <Avatar src={video.authorAvatar} name={video.authorName} size={38} />
                 <div>
                   <p className="font-semibold text-sm" style={{ color: "var(--yuvist-text)" }}>{video.authorName}</p>
                   <p className="text-xs" style={{ color: "var(--yuvist-muted)" }}>{formatViews(video.views)} просмотров</p>
                 </div>
               </button>
-              <button
-                onClick={() => onSponsor(video.authorId)}
+              <button onClick={() => onSponsor(video.authorId)}
                 className="yuvist-btn-ghost flex items-center gap-1.5 text-sm"
-                style={{ borderColor: "var(--yuvist-red)", color: "var(--yuvist-red)" }}
-              >
-                <Icon name="Heart" size={15} />
-                Спонсировать
+                style={{ borderColor: "var(--yuvist-red)", color: "var(--yuvist-red)" }}>
+                <Icon name="Heart" size={15} />Спонсировать
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={toggleLike}
+              <button onClick={toggleLike}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-all"
-                style={{
-                  background: currentUser && video.likes.includes(currentUser.id)
-                    ? "var(--yuvist-red)" : "var(--yuvist-surface2)",
-                  color: currentUser && video.likes.includes(currentUser.id) ? "#fff" : "var(--yuvist-text)",
-                  border: "1px solid var(--yuvist-border)",
-                }}
-              >
-                <Icon name="ThumbsUp" size={15} />
-                {video.likes.length}
+                style={{ background: currentUser && video.likes.includes(currentUser.id) ? "var(--yuvist-red)" : "var(--yuvist-surface2)", color: currentUser && video.likes.includes(currentUser.id) ? "#fff" : "var(--yuvist-text)", border: "1px solid var(--yuvist-border)" }}>
+                <Icon name="ThumbsUp" size={15} />{video.likes.length}
               </button>
-              <button
-                onClick={toggleDislike}
+              <button onClick={toggleDislike}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-all"
-                style={{
-                  background: currentUser && video.dislikes.includes(currentUser.id)
-                    ? "#555" : "var(--yuvist-surface2)",
-                  color: "var(--yuvist-text)",
-                  border: "1px solid var(--yuvist-border)",
-                }}
-              >
-                <Icon name="ThumbsDown" size={15} />
-                {video.dislikes.length}
+                style={{ background: currentUser && video.dislikes.includes(currentUser.id) ? "#555" : "var(--yuvist-surface2)", color: "var(--yuvist-text)", border: "1px solid var(--yuvist-border)" }}>
+                <Icon name="ThumbsDown" size={15} />{video.dislikes.length}
               </button>
             </div>
           </div>
-
           {video.description && (
-            <div
-              className="mt-3 p-3 rounded-xl text-sm leading-relaxed"
-              style={{ background: "var(--yuvist-surface2)", color: "var(--yuvist-muted)" }}
-            >
+            <div className="mt-3 p-3 rounded-xl text-sm leading-relaxed" style={{ background: "var(--yuvist-surface2)", color: "var(--yuvist-muted)" }}>
               {video.description}
             </div>
           )}
-
           <div className="mt-6">
-            <h3 className="font-bold mb-4" style={{ color: "var(--yuvist-text)" }}>
-              Комментарии · {video.comments.length}
-            </h3>
+            <h3 className="font-bold mb-4" style={{ color: "var(--yuvist-text)" }}>Комментарии · {video.comments.length}</h3>
             {currentUser ? (
               <div className="flex gap-3 mb-5">
                 <Avatar src={currentUser.avatar} name={currentUser.username} size={34} />
                 <div className="flex-1">
-                  <input
-                    className="yuvist-input text-sm" value={commentText}
+                  <input className="yuvist-input text-sm" value={commentText}
                     onChange={e => setCommentText(e.target.value)}
                     placeholder="Напишите комментарий..."
-                    onKeyDown={e => e.key === "Enter" && addComment()}
-                  />
-                  {commentText && (
-                    <button onClick={addComment} className="yuvist-btn mt-2 text-sm py-1.5 px-4">
-                      Отправить
-                    </button>
-                  )}
+                    onKeyDown={e => e.key === "Enter" && addComment()} />
+                  {commentText && <button onClick={addComment} className="yuvist-btn mt-2 text-sm py-1.5 px-4">Отправить</button>}
                 </div>
               </div>
             ) : (
-              <p className="text-sm mb-4" style={{ color: "var(--yuvist-muted)" }}>
-                Войдите, чтобы оставить комментарий
-              </p>
+              <p className="text-sm mb-4" style={{ color: "var(--yuvist-muted)" }}>Войдите, чтобы оставить комментарий</p>
             )}
             <div className="space-y-4">
               {video.comments.map(c => (
@@ -787,12 +665,8 @@ function VideoPage({
                   <Avatar src={c.userAvatar} name={c.username} size={32} />
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-semibold" style={{ color: "var(--yuvist-text)" }}>
-                        {c.username}
-                      </span>
-                      <span className="text-xs" style={{ color: "var(--yuvist-muted)" }}>
-                        {timeAgo(c.createdAt)}
-                      </span>
+                      <span className="text-sm font-semibold" style={{ color: "var(--yuvist-text)" }}>{c.username}</span>
+                      <span className="text-xs" style={{ color: "var(--yuvist-muted)" }}>{timeAgo(c.createdAt)}</span>
                     </div>
                     <p className="text-sm" style={{ color: "var(--yuvist-text)", opacity: 0.85 }}>{c.text}</p>
                   </div>
@@ -802,31 +676,17 @@ function VideoPage({
           </div>
         </div>
       </div>
-
       <div className="w-80 flex-shrink-0 hidden lg:block">
         <p className="font-semibold mb-3 text-sm" style={{ color: "var(--yuvist-muted)" }}>Похожие видео</p>
         <div className="space-y-3">
           {related.map(v => (
-            <div
-              key={v.id}
-              className="flex gap-2 cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={() => onUpdate(v)}
-            >
-              <div
-                className="rounded-lg overflow-hidden flex-shrink-0"
-                style={{ width: 120, aspectRatio: "16/9", background: "var(--yuvist-surface2)" }}
-              >
-                {v.thumbnail
-                  ? <img src={v.thumbnail} className="w-full h-full object-cover" alt={v.title} />
-                  : <div className="w-full h-full flex items-center justify-center">
-                      <Icon name="Play" size={20} style={{ color: "var(--yuvist-muted)" }} />
-                    </div>
-                }
+            <div key={v.id} className="flex gap-2 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => { onUpdate(v); }}>
+              <div className="rounded-lg overflow-hidden flex-shrink-0 relative" style={{ width: 120, aspectRatio: "16/9", background: "var(--yuvist-surface2)" }}>
+                {v.thumbnail ? <img src={v.thumbnail} className="w-full h-full object-cover" alt={v.title} /> : <div className="w-full h-full flex items-center justify-center"><Icon name="Play" size={20} style={{ color: "var(--yuvist-muted)" }} /></div>}
+                {v.isAdult && <span className="absolute top-1 left-1 text-white text-xs font-bold px-1 rounded" style={{ background: "#b71c1c", fontSize: 9 }}>18+</span>}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold line-clamp-2 leading-snug" style={{ color: "var(--yuvist-text)" }}>
-                  {v.title}
-                </p>
+                <p className="text-xs font-semibold line-clamp-2 leading-snug" style={{ color: "var(--yuvist-text)" }}>{v.title}</p>
                 <p className="text-xs mt-1" style={{ color: "var(--yuvist-muted)" }}>{v.authorName}</p>
                 <p className="text-xs" style={{ color: "var(--yuvist-muted)" }}>{formatViews(v.views)} просм.</p>
               </div>
@@ -843,49 +703,28 @@ function VideoPage({
 
 function SponsorModal({ author, onClose }: { author: User | undefined; onClose: () => void }) {
   if (!author) return null;
+  const hasQrImage = !!author.donateQrImage;
+  const hasLink = !!author.donateLink;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
-      style={{ background: "rgba(0,0,0,0.8)" }}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in" style={{ background: "rgba(0,0,0,0.8)" }}>
       <div className="yuvist-card p-7 w-full max-w-sm mx-4 text-center animate-scale-in relative">
-        <button onClick={onClose} className="absolute top-4 right-4" style={{ color: "var(--yuvist-muted)" }}>
-          <Icon name="X" size={20} />
-        </button>
-        <div className="flex justify-center mb-3">
-          <Icon name="Heart" size={40} style={{ color: "var(--yuvist-red)" }} />
-        </div>
-        <h2 className="text-lg font-bold mb-2" style={{ color: "var(--yuvist-text)" }}>
-          Поддержать {author.username}
-        </h2>
-        {author.donateLink ? (
+        <button onClick={onClose} className="absolute top-4 right-4" style={{ color: "var(--yuvist-muted)" }}><Icon name="X" size={20} /></button>
+        <div className="flex justify-center mb-3"><Icon name="Heart" size={40} style={{ color: "var(--yuvist-red)" }} /></div>
+        <h2 className="text-lg font-bold mb-2" style={{ color: "var(--yuvist-text)" }}>Поддержать {author.username}</h2>
+        {hasQrImage || hasLink ? (
           <>
-            <p className="text-sm mb-4" style={{ color: "var(--yuvist-muted)" }}>
-              Отсканируйте QR-код или перейдите по ссылке для доната
-            </p>
-            <div
-              className="p-4 rounded-xl mb-4 flex items-center justify-center"
-              style={{ background: "var(--yuvist-surface2)" }}
-            >
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(author.donateLink)}`}
-                alt="QR"
-                className="rounded-lg"
-                style={{ width: 160, height: 160 }}
-              />
+            <p className="text-sm mb-4" style={{ color: "var(--yuvist-muted)" }}>Отсканируйте QR-код или перейдите по ссылке</p>
+            <div className="p-4 rounded-xl mb-4 flex items-center justify-center" style={{ background: "var(--yuvist-surface2)" }}>
+              {hasQrImage ? (
+                <img src={author.donateQrImage!} alt="QR" className="rounded-lg" style={{ width: 160, height: 160, objectFit: "contain" }} />
+              ) : (
+                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(author.donateLink)}`} alt="QR" className="rounded-lg" style={{ width: 160, height: 160 }} />
+              )}
             </div>
-            <a
-              href={author.donateLink}
-              target="_blank" rel="noreferrer"
-              className="yuvist-btn block w-full text-center"
-            >
-              Перейти к донату
-            </a>
+            {hasLink && <a href={author.donateLink} target="_blank" rel="noreferrer" className="yuvist-btn block w-full text-center">Перейти к донату</a>}
           </>
         ) : (
-          <p className="text-sm" style={{ color: "var(--yuvist-muted)" }}>
-            Автор не указал ссылку для доната
-          </p>
+          <p className="text-sm" style={{ color: "var(--yuvist-muted)" }}>Автор не настроил донат</p>
         )}
         <button onClick={onClose} className="yuvist-btn-ghost w-full mt-3">Закрыть</button>
       </div>
@@ -895,19 +734,30 @@ function SponsorModal({ author, onClose }: { author: User | undefined; onClose: 
 
 // ─── SETTINGS PAGE ────────────────────────────────────────────────────────────
 
-function SettingsPage({
-  currentUser, theme, onThemeChange, onLogout, onDeleteAccount, onSwitchAccount, onUpdateUser,
-}: {
+function SettingsPage({ currentUser, theme, onThemeChange, onLogout, onDeleteAccount, onSwitchAccount, onUpdateUser, allVideos }: {
   currentUser: User; theme: "dark" | "light"; onThemeChange: (t: "dark" | "light") => void;
   onLogout: () => void; onDeleteAccount: () => void; onSwitchAccount: () => void;
-  onUpdateUser: (u: User) => void;
+  onUpdateUser: (u: User) => void; allVideos: Video[];
 }) {
   const [donateLink, setDonateLink] = useState(currentUser.donateLink || "");
+  const [donateQr, setDonateQr] = useState<string | null>(currentUser.donateQrImage || null);
   const [saved, setSaved] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const myVideos = allVideos.filter(v => v.authorId === currentUser.id);
+  const totalViews = myVideos.reduce((s, v) => s + v.views, 0);
+  const totalLikes = myVideos.reduce((s, v) => s + v.likes.length, 0);
+  const totalComments = myVideos.reduce((s, v) => s + v.comments.length, 0);
+
+  const handleQrFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const url = await readFileAsDataUrl(f);
+    setDonateQr(url);
+  };
+
   const saveDonate = () => {
-    onUpdateUser({ ...currentUser, donateLink });
+    onUpdateUser({ ...currentUser, donateLink, donateQrImage: donateQr });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -915,21 +765,16 @@ function SettingsPage({
   return (
     <div className="max-w-xl animate-fade-in">
       <h1 className="text-2xl font-bold mb-6" style={{ color: "var(--yuvist-text)" }}>Настройки</h1>
-
       <div className="space-y-4">
+
+        {/* Theme */}
         <div className="yuvist-card p-5">
           <h3 className="font-semibold mb-3" style={{ color: "var(--yuvist-text)" }}>Тема оформления</h3>
           <div className="flex gap-3">
             {(["dark", "light"] as const).map(t => (
-              <button
-                key={t} onClick={() => onThemeChange(t)}
+              <button key={t} onClick={() => onThemeChange(t)}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all"
-                style={{
-                  background: theme === t ? "var(--yuvist-red)" : "var(--yuvist-surface2)",
-                  color: theme === t ? "#fff" : "var(--yuvist-text)",
-                  border: `2px solid ${theme === t ? "var(--yuvist-red)" : "var(--yuvist-border)"}`,
-                }}
-              >
+                style={{ background: theme === t ? "var(--yuvist-red)" : "var(--yuvist-surface2)", color: theme === t ? "#fff" : "var(--yuvist-text)", border: `2px solid ${theme === t ? "var(--yuvist-red)" : "var(--yuvist-border)"}` }}>
                 <Icon name={t === "dark" ? "Moon" : "Sun"} size={16} />
                 {t === "dark" ? "Тёмная" : "Светлая"}
               </button>
@@ -937,68 +782,74 @@ function SettingsPage({
           </div>
         </div>
 
+        {/* Donate */}
         <div className="yuvist-card p-5">
-          <h3 className="font-semibold mb-1" style={{ color: "var(--yuvist-text)" }}>
-            Ссылка для доната (QR-код)
-          </h3>
-          <p className="text-xs mb-3" style={{ color: "var(--yuvist-muted)" }}>
-            Вставьте ссылку — под вашими видео появится кнопка «Спонсировать»
-          </p>
-          <input
-            className="yuvist-input mb-3" value={donateLink}
-            onChange={e => setDonateLink(e.target.value)} placeholder="https://..."
-          />
-          <button onClick={saveDonate} className="yuvist-btn text-sm py-2 px-5">
-            {saved ? "Сохранено ✓" : "Сохранить"}
-          </button>
+          <h3 className="font-semibold mb-1" style={{ color: "var(--yuvist-text)" }}>Донат / Спонсорство</h3>
+          <p className="text-xs mb-3" style={{ color: "var(--yuvist-muted)" }}>Загрузите QR-код или вставьте ссылку. Под вашими видео появится кнопка «Спонсировать».</p>
+          <div className="mb-3">
+            <label className="block text-xs mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>QR-код (картинка)</label>
+            <label className="flex items-center gap-3 rounded-xl border-2 border-dashed cursor-pointer hover:border-red-500 transition-colors"
+              style={{ borderColor: donateQr ? "var(--yuvist-red)" : "var(--yuvist-border)", padding: "12px", background: "var(--yuvist-surface2)" }}>
+              {donateQr ? <img src={donateQr} alt="QR" className="w-12 h-12 object-contain rounded" /> : <Icon name="QrCode" size={24} style={{ color: "var(--yuvist-muted)" }} />}
+              <span className="text-sm" style={{ color: donateQr ? "var(--yuvist-text)" : "var(--yuvist-muted)" }}>
+                {donateQr ? "QR-код загружен (нажмите для смены)" : "Загрузить QR-код из файла"}
+              </span>
+              <input type="file" accept="image/*" onChange={handleQrFile} className="hidden" />
+            </label>
+          </div>
+          <label className="block text-xs mb-1.5 font-medium" style={{ color: "var(--yuvist-muted)" }}>Ссылка для доната (опционально)</label>
+          <input className="yuvist-input mb-3" value={donateLink} onChange={e => setDonateLink(e.target.value)} placeholder="https://..." />
+          <button onClick={saveDonate} className="yuvist-btn text-sm py-2 px-5">{saved ? "Сохранено ✓" : "Сохранить"}</button>
         </div>
 
+        {/* Stats */}
+        <div className="yuvist-card p-5">
+          <h3 className="font-semibold mb-3" style={{ color: "var(--yuvist-text)" }}>Статистика канала</h3>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: "Видео", value: myVideos.length, icon: "Video" },
+              { label: "Просмотров", value: formatViews(totalViews), icon: "Eye" },
+              { label: "Лайков", value: totalLikes, icon: "ThumbsUp" },
+              { label: "Комментариев", value: totalComments, icon: "MessageCircle" },
+            ].map(stat => (
+              <div key={stat.label} className="p-3 rounded-xl flex items-center gap-3" style={{ background: "var(--yuvist-surface2)" }}>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: "rgba(229,57,53,.15)" }}>
+                  <Icon name={stat.icon as "Video"} size={18} style={{ color: "var(--yuvist-red)" }} />
+                </div>
+                <div>
+                  <p className="text-lg font-bold leading-tight" style={{ color: "var(--yuvist-text)" }}>{stat.value}</p>
+                  <p className="text-xs" style={{ color: "var(--yuvist-muted)" }}>{stat.label}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Account */}
         <div className="yuvist-card p-5">
           <h3 className="font-semibold mb-3" style={{ color: "var(--yuvist-text)" }}>Аккаунт</h3>
+          <p className="text-xs mb-3" style={{ color: "var(--yuvist-muted)" }}>
+            Зарегистрирован: {formatDate(currentUser.createdAt)}
+          </p>
           <div className="space-y-2">
             <button onClick={onSwitchAccount} className="yuvist-btn-ghost w-full flex items-center gap-2 justify-center">
-              <Icon name="RefreshCw" size={16} />
-              Сменить аккаунт
+              <Icon name="RefreshCw" size={16} />Сменить аккаунт
             </button>
             <button onClick={onLogout} className="yuvist-btn-ghost w-full flex items-center gap-2 justify-center">
-              <Icon name="LogOut" size={16} />
-              Выйти из аккаунта
+              <Icon name="LogOut" size={16} />Выйти из аккаунта
             </button>
             {!confirmDelete ? (
-              <button
-                onClick={() => setConfirmDelete(true)}
+              <button onClick={() => setConfirmDelete(true)}
                 className="w-full flex items-center gap-2 justify-center px-4 py-2 rounded-xl font-medium text-sm transition-all"
-                style={{
-                  background: "rgba(229,57,53,0.1)", color: "var(--yuvist-red)",
-                  border: "1px solid rgba(229,57,53,0.3)",
-                }}
-              >
-                <Icon name="Trash2" size={16} />
-                Удалить аккаунт
+                style={{ background: "rgba(229,57,53,.1)", color: "var(--yuvist-red)", border: "1px solid rgba(229,57,53,.3)" }}>
+                <Icon name="Trash2" size={16} />Удалить аккаунт
               </button>
             ) : (
-              <div
-                className="p-3 rounded-xl"
-                style={{ background: "rgba(229,57,53,0.08)", border: "1px solid rgba(229,57,53,0.3)" }}
-              >
-                <p className="text-sm mb-3 text-center" style={{ color: "var(--yuvist-text)" }}>
-                  Вы уверены? Это действие необратимо.
-                </p>
+              <div className="p-3 rounded-xl" style={{ background: "rgba(229,57,53,.08)", border: "1px solid rgba(229,57,53,.3)" }}>
+                <p className="text-sm mb-3 text-center" style={{ color: "var(--yuvist-text)" }}>Вы уверены? Это действие необратимо.</p>
                 <div className="flex gap-2">
-                  <button
-                    onClick={onDeleteAccount}
-                    className="flex-1 py-2 rounded-lg text-sm font-semibold"
-                    style={{ background: "var(--yuvist-red)", color: "#fff" }}
-                  >
-                    Удалить
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete(false)}
-                    className="flex-1 py-2 rounded-lg text-sm font-semibold"
-                    style={{ background: "var(--yuvist-surface2)", color: "var(--yuvist-text)" }}
-                  >
-                    Отмена
-                  </button>
+                  <button onClick={onDeleteAccount} className="flex-1 py-2 rounded-lg text-sm font-semibold" style={{ background: "var(--yuvist-red)", color: "#fff" }}>Удалить</button>
+                  <button onClick={() => setConfirmDelete(false)} className="flex-1 py-2 rounded-lg text-sm font-semibold" style={{ background: "var(--yuvist-surface2)", color: "var(--yuvist-text)" }}>Отмена</button>
                 </div>
               </div>
             )}
@@ -1016,12 +867,11 @@ function ProfileEditor({ user, onSave, onClose }: { user: User; onSave: (u: User
   const [avatar, setAvatar] = useState<string | null>(user.avatar);
   const [saved, setSaved] = useState(false);
 
-  const handleAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    const reader = new FileReader();
-    reader.onload = ev => setAvatar(ev.target?.result as string);
-    reader.readAsDataURL(f);
+    const url = await readFileAsDataUrl(f);
+    setAvatar(url);
   };
 
   const handleSave = () => {
@@ -1031,24 +881,16 @@ function ProfileEditor({ user, onSave, onClose }: { user: User; onSave: (u: User
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
-      style={{ background: "rgba(0,0,0,0.8)" }}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in" style={{ background: "rgba(0,0,0,0.8)" }}>
       <div className="yuvist-card p-6 w-full max-w-sm mx-4 animate-scale-in">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold" style={{ color: "var(--yuvist-text)" }}>Редактор профиля</h2>
-          <button onClick={onClose} style={{ color: "var(--yuvist-muted)" }}>
-            <Icon name="X" size={20} />
-          </button>
+          <button onClick={onClose} style={{ color: "var(--yuvist-muted)" }}><Icon name="X" size={20} /></button>
         </div>
         <div className="flex flex-col items-center mb-5">
           <label className="cursor-pointer group relative">
             <Avatar src={avatar} name={user.username} size={80} />
-            <div
-              className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ background: "rgba(0,0,0,0.6)" }}
-            >
+            <div className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: "rgba(0,0,0,0.6)" }}>
               <Icon name="Camera" size={22} style={{ color: "#fff" }} />
             </div>
             <input type="file" accept="image/*" onChange={handleAvatar} className="hidden" />
@@ -1062,14 +904,9 @@ function ProfileEditor({ user, onSave, onClose }: { user: User; onSave: (u: User
           </div>
           <div>
             <label className="block text-xs mb-1 font-medium" style={{ color: "var(--yuvist-muted)" }}>О себе</label>
-            <textarea
-              className="yuvist-input resize-none" rows={3}
-              value={bio} onChange={e => setBio(e.target.value)} placeholder="Расскажите о себе..."
-            />
+            <textarea className="yuvist-input resize-none" rows={3} value={bio} onChange={e => setBio(e.target.value)} placeholder="Расскажите о себе..." />
           </div>
-          <button onClick={handleSave} className="yuvist-btn w-full">
-            {saved ? "Сохранено ✓" : "Сохранить"}
-          </button>
+          <button onClick={handleSave} className="yuvist-btn w-full">{saved ? "Сохранено ✓" : "Сохранить"}</button>
         </div>
       </div>
     </div>
@@ -1078,81 +915,156 @@ function ProfileEditor({ user, onSave, onClose }: { user: User; onSave: (u: User
 
 // ─── CHANNEL PAGE ─────────────────────────────────────────────────────────────
 
-function ChannelPage({
-  authorId, allUsers, allVideos, currentUser, onVideoClick, onEditProfile, subscriptions, onToggleSub,
-}: {
+type ChannelTab = "videos" | "liked" | "subscriptions";
+
+function ChannelPage({ authorId, allUsers, allVideos, currentUser, onVideoClick, onEditProfile, subscriptions, onToggleSub }: {
   authorId: string; allUsers: User[]; allVideos: Video[]; currentUser: User | null;
   onVideoClick: (v: Video) => void; onEditProfile: () => void;
   subscriptions: string[]; onToggleSub: (id: string) => void;
 }) {
+  const [tab, setTab] = useState<ChannelTab>("videos");
   const author = allUsers.find(u => u.id === authorId);
   const videos = allVideos.filter(v => v.authorId === authorId);
   const isOwn = currentUser?.id === authorId;
   const isSubbed = subscriptions.includes(authorId);
 
+  // Subscribers count: how many users have this author in their subscriptions
+  const subCount = allUsers.length; // approximate since subs stored per-user locally
+
+  // Liked videos (only if own profile)
+  const likedVideos = isOwn && currentUser
+    ? allVideos.filter(v => v.likes.includes(currentUser.id))
+    : [];
+
+  // Subscribed users' recent videos
+  const subUsers = isOwn
+    ? allUsers.filter(u => subscriptions.includes(u.id))
+    : [];
+
   if (!author) return <p style={{ color: "var(--yuvist-muted)" }}>Канал не найден</p>;
+
+  const totalViews = videos.reduce((s, v) => s + v.views, 0);
+
+  const tabs: { id: ChannelTab; label: string; icon: string }[] = [
+    { id: "videos", label: "Видео", icon: "Play" },
+    ...(isOwn ? [
+      { id: "liked" as ChannelTab, label: "Понравилось", icon: "ThumbsUp" },
+      { id: "subscriptions" as ChannelTab, label: "Подписки", icon: "Bell" },
+    ] : []),
+  ];
 
   return (
     <div className="animate-fade-in">
-      <div
-        className="rounded-2xl p-6 mb-6 flex items-center gap-5 flex-wrap"
-        style={{ background: "var(--yuvist-surface)", border: "1px solid var(--yuvist-border)" }}
-      >
-        <Avatar src={author.avatar} name={author.username} size={80} />
-        <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--yuvist-text)" }}>{author.username}</h1>
-          <p className="text-sm mt-1" style={{ color: "var(--yuvist-muted)" }}>
-            {videos.length} видео · зарегистрирован {timeAgo(author.createdAt)}
-          </p>
-          {author.bio && (
-            <p className="text-sm mt-2" style={{ color: "var(--yuvist-text)", opacity: 0.75 }}>{author.bio}</p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {isOwn ? (
-            <button onClick={onEditProfile} className="yuvist-btn-ghost flex items-center gap-2 text-sm">
-              <Icon name="Pencil" size={15} />
-              Редактировать профиль
-            </button>
-          ) : (
-            <button
-              onClick={() => onToggleSub(authorId)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm transition-all"
-              style={{
-                background: isSubbed ? "var(--yuvist-surface2)" : "var(--yuvist-red)",
-                color: isSubbed ? "var(--yuvist-text)" : "#fff",
-                border: `1px solid ${isSubbed ? "var(--yuvist-border)" : "transparent"}`,
-              }}
-            >
+      {/* Banner */}
+      <div className="h-28 rounded-2xl mb-0 w-full" style={{ background: "linear-gradient(135deg, #1a0000 0%, #3d0000 50%, #1a0505 100%)", borderRadius: "16px 16px 0 0" }} />
+
+      {/* Profile header */}
+      <div className="px-6 pb-5 pt-0 rounded-2xl" style={{ background: "var(--yuvist-surface)", border: "1px solid var(--yuvist-border)", borderTop: "none", borderRadius: "0 0 16px 16px", marginBottom: 24 }}>
+        <div className="flex items-end gap-4 -mt-10 mb-4 flex-wrap">
+          <div className="relative flex-shrink-0" style={{ marginBottom: 0 }}>
+            <div style={{ border: "4px solid var(--yuvist-surface)", borderRadius: "50%", display: "inline-block" }}>
+              <Avatar src={author.avatar} name={author.username} size={88} />
+            </div>
+            {isOwn && (
+              <button onClick={onEditProfile}
+                className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center transition-colors"
+                style={{ background: "var(--yuvist-red)", border: "2px solid var(--yuvist-surface)" }}>
+                <Icon name="Pencil" size={13} style={{ color: "#fff" }} />
+              </button>
+            )}
+          </div>
+          <div className="flex-1 min-w-0 pt-10">
+            <h1 className="text-2xl font-bold" style={{ color: "var(--yuvist-text)" }}>{author.username}</h1>
+            <div className="flex items-center gap-3 mt-1 flex-wrap">
+              <span className="text-sm" style={{ color: "var(--yuvist-muted)" }}>{videos.length} видео</span>
+              <span style={{ color: "var(--yuvist-border)" }}>·</span>
+              <span className="text-sm" style={{ color: "var(--yuvist-muted)" }}>{formatViews(totalViews)} просмотров</span>
+              <span style={{ color: "var(--yuvist-border)" }}>·</span>
+              <span className="text-sm" style={{ color: "var(--yuvist-muted)" }}>Зарегистрирован {formatDate(author.createdAt)}</span>
+            </div>
+            {author.bio && <p className="text-sm mt-2 leading-relaxed" style={{ color: "var(--yuvist-text)", opacity: 0.75 }}>{author.bio}</p>}
+          </div>
+          {!isOwn && (
+            <button onClick={() => onToggleSub(authorId)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all flex-shrink-0"
+              style={{ background: isSubbed ? "var(--yuvist-surface2)" : "var(--yuvist-red)", color: isSubbed ? "var(--yuvist-text)" : "#fff", border: `1px solid ${isSubbed ? "var(--yuvist-border)" : "transparent"}` }}>
               <Icon name={isSubbed ? "BellOff" : "Bell"} size={15} />
               {isSubbed ? "Отписаться" : "Подписаться"}
             </button>
           )}
         </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 border-t pt-3" style={{ borderColor: "var(--yuvist-border)" }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+              style={{ background: tab === t.id ? "rgba(229,57,53,.12)" : "transparent", color: tab === t.id ? "var(--yuvist-red)" : "var(--yuvist-muted)" }}>
+              <Icon name={t.icon as "Play"} size={15} />{t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <h2 className="font-semibold mb-4" style={{ color: "var(--yuvist-text)" }}>Видео канала</h2>
-      {videos.length === 0 ? (
-        <div className="py-12 text-center">
-          <Icon name="Video" size={48} style={{ color: "var(--yuvist-muted)", margin: "0 auto 12px" }} />
-          <p style={{ color: "var(--yuvist-muted)" }}>На этом канале пока нет видео</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {videos.map(v => <VideoCard key={v.id} video={v} onClick={() => onVideoClick(v)} />)}
-        </div>
+      {/* Tab content */}
+      {tab === "videos" && (
+        videos.length === 0 ? (
+          <div className="py-16 text-center">
+            <Icon name="Video" size={48} style={{ color: "var(--yuvist-muted)", margin: "0 auto 12px" }} />
+            <p style={{ color: "var(--yuvist-muted)" }}>На этом канале пока нет видео</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {videos.map(v => <VideoCard key={v.id} video={v} onClick={() => onVideoClick(v)} />)}
+          </div>
+        )
       )}
+
+      {tab === "liked" && isOwn && (
+        likedVideos.length === 0 ? (
+          <div className="py-16 text-center">
+            <Icon name="ThumbsUp" size={48} style={{ color: "var(--yuvist-muted)", margin: "0 auto 12px" }} />
+            <p style={{ color: "var(--yuvist-muted)" }}>Вы ещё не лайкали видео</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {likedVideos.map(v => <VideoCard key={v.id} video={v} onClick={() => onVideoClick(v)} />)}
+          </div>
+        )
+      )}
+
+      {tab === "subscriptions" && isOwn && (
+        subUsers.length === 0 ? (
+          <div className="py-16 text-center">
+            <Icon name="Bell" size={48} style={{ color: "var(--yuvist-muted)", margin: "0 auto 12px" }} />
+            <p style={{ color: "var(--yuvist-muted)" }}>Вы ни на кого не подписаны</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {subUsers.map(u => {
+              const uVideos = allVideos.filter(v => v.authorId === u.id);
+              return (
+                <div key={u.id} className="yuvist-card p-4 flex flex-col items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => onToggleSub(u.id)}>
+                  <Avatar src={u.avatar} name={u.username} size={56} />
+                  <p className="font-semibold text-sm text-center" style={{ color: "var(--yuvist-text)" }}>{u.username}</p>
+                  <p className="text-xs" style={{ color: "var(--yuvist-muted)" }}>{uVideos.length} видео</p>
+                  <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(229,57,53,.12)", color: "var(--yuvist-red)" }}>Подписан</span>
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
+
+      {/* Suppress unused var */}
+      {subCount > 0 && null}
     </div>
   );
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 
-type Page =
-  | "home"
-  | "subscriptions"
-  | "history"
-  | "settings"
+type Page = "home" | "subscriptions" | "history" | "settings"
   | { type: "video"; video: Video }
   | { type: "channel"; authorId: string };
 
@@ -1227,6 +1139,9 @@ export default function Index() {
       if (typeof prev === "object" && "type" in prev && prev.type === "video" && prev.video.id === updated.id) {
         return { type: "video", video: updated };
       }
+      if (typeof prev === "object" && "type" in prev && prev.type === "video") {
+        return { type: "video", video: updated };
+      }
       return prev;
     });
   }, []);
@@ -1240,32 +1155,19 @@ export default function Index() {
   };
 
   const handleToggleSub = (authorId: string) => {
-    setSubscriptions(prev =>
-      prev.includes(authorId) ? prev.filter(id => id !== authorId) : [...prev, authorId]
-    );
+    setSubscriptions(prev => prev.includes(authorId) ? prev.filter(id => id !== authorId) : [...prev, authorId]);
   };
 
-  const navTo = (p: Page) => {
-    setPage(p);
-    setSidebarOpen(false);
-    setSearchActive(false);
-    window.scrollTo({ top: 0 });
-  };
+  const navTo = (p: Page) => { setPage(p); setSidebarOpen(false); setSearchActive(false); window.scrollTo({ top: 0 }); };
 
   const searchResults = searchQuery.trim()
-    ? videos.filter(
-        v =>
-          v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          v.authorName.toLowerCase().includes(searchQuery.toLowerCase())
-      )
+    ? videos.filter(v => v.title.toLowerCase().includes(searchQuery.toLowerCase()) || v.authorName.toLowerCase().includes(searchQuery.toLowerCase()))
     : [];
 
   const subVideos = videos.filter(v => subscriptions.includes(v.authorId));
-  const historyVideos = history
-    .map(id => videos.find(v => v.id === id))
-    .filter(Boolean) as Video[];
-
+  const historyVideos = history.map(id => videos.find(v => v.id === id)).filter(Boolean) as Video[];
   const sponsorAuthor = showSponsor ? users.find(u => u.id === showSponsor) : undefined;
+  const currentPageId = typeof page === "string" ? page : page.type;
 
   const navItems = [
     { id: "home", icon: "Home", label: "Главная" },
@@ -1274,154 +1176,84 @@ export default function Index() {
     { id: "settings", icon: "Settings", label: "Настройки" },
   ];
 
-  const currentPageId = typeof page === "string" ? page : page.type;
-
   return (
     <div style={{ minHeight: "100vh", background: "var(--yuvist-surface2)" }}>
       {/* TOPBAR */}
       <header className="fixed top-0 left-0 right-0 z-40 nav-glass" style={{ height: 56 }}>
         <div className="flex items-center justify-between h-full px-4 gap-3">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="lg:hidden p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-              style={{ color: "var(--yuvist-text)" }}
-            >
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden p-1.5 rounded-lg hover:bg-white/10 transition-colors" style={{ color: "var(--yuvist-text)" }}>
               <Icon name="Menu" size={22} />
             </button>
             <button onClick={() => navTo("home")} className="flex items-center gap-2">
-              <div
-                className="w-7 h-7 rounded-lg flex items-center justify-center font-black text-white text-xs"
-                style={{ background: "var(--yuvist-red)" }}
-              >
-                Ю
-              </div>
-              <span className="font-black text-lg tracking-tight" style={{ color: "var(--yuvist-text)", fontFamily: "Golos Text" }}>
-                ЮВИСТ
-              </span>
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center font-black text-white text-xs" style={{ background: "var(--yuvist-red)" }}>Ю</div>
+              <span className="font-black text-lg tracking-tight" style={{ color: "var(--yuvist-text)", fontFamily: "Golos Text" }}>ЮВИСТ</span>
             </button>
           </div>
-
-          <div className="flex-1 max-w-xl hidden sm:flex items-center gap-2">
+          <div className="flex-1 max-w-xl hidden sm:flex">
             <div className="relative flex-1">
-              <Icon
-                name="Search" size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2"
-                style={{ color: "var(--yuvist-muted)" }}
-              />
-              <input
-                className="yuvist-input pl-9 text-sm py-2"
-                value={searchQuery}
-                onChange={e => {
-                  setSearchQuery(e.target.value);
-                  setSearchActive(e.target.value.trim().length > 0);
-                }}
-                placeholder="Поиск видео..."
-                onKeyDown={e => e.key === "Escape" && setSearchActive(false)}
-              />
+              <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--yuvist-muted)" }} />
+              <input className="yuvist-input pl-9 text-sm py-2" value={searchQuery}
+                onChange={e => { setSearchQuery(e.target.value); setSearchActive(e.target.value.trim().length > 0); }}
+                placeholder="Поиск видео..." onKeyDown={e => e.key === "Escape" && setSearchActive(false)} />
             </div>
           </div>
-
           <div className="flex items-center gap-2">
             {currentUser ? (
               <>
                 <button onClick={() => setShowUpload(true)} className="yuvist-btn flex items-center gap-1.5 text-sm py-2 px-3">
-                  <Icon name="Plus" size={16} />
-                  <span className="hidden sm:inline">Загрузить</span>
+                  <Icon name="Plus" size={16} /><span className="hidden sm:inline">Загрузить</span>
                 </button>
-                <button
-                  onClick={() => navTo({ type: "channel", authorId: currentUser.id })}
-                  className="hover:opacity-80 transition-opacity"
-                >
+                <button onClick={() => navTo({ type: "channel", authorId: currentUser.id })} className="hover:opacity-80 transition-opacity">
                   <Avatar src={currentUser.avatar} name={currentUser.username} size={32} />
                 </button>
               </>
             ) : (
-              <button onClick={() => setShowAuth(true)} className="yuvist-btn text-sm py-2 px-4">
-                Войти
-              </button>
+              <button onClick={() => setShowAuth(true)} className="yuvist-btn text-sm py-2 px-4">Войти</button>
             )}
           </div>
         </div>
       </header>
 
       {/* Mobile search */}
-      <div
-        className="fixed z-30 sm:hidden px-4 py-2"
-        style={{ top: 56, left: 0, right: 0, background: "var(--yuvist-surface2)", borderBottom: "1px solid var(--yuvist-border)" }}
-      >
+      <div className="fixed z-30 sm:hidden px-4 py-2" style={{ top: 56, left: 0, right: 0, background: "var(--yuvist-surface2)", borderBottom: "1px solid var(--yuvist-border)" }}>
         <div className="relative">
           <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--yuvist-muted)" }} />
-          <input
-            className="yuvist-input pl-9 text-sm py-2"
-            value={searchQuery}
-            onChange={e => {
-              setSearchQuery(e.target.value);
-              setSearchActive(e.target.value.trim().length > 0);
-            }}
-            placeholder="Поиск видео..."
-          />
+          <input className="yuvist-input pl-9 text-sm py-2" value={searchQuery}
+            onChange={e => { setSearchQuery(e.target.value); setSearchActive(e.target.value.trim().length > 0); }}
+            placeholder="Поиск видео..." />
         </div>
       </div>
 
       {/* SIDEBAR */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 lg:hidden"
-          style={{ background: "rgba(0,0,0,0.5)" }}
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      <aside
-        className={`fixed left-0 z-30 flex flex-col transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
-        style={{
-          top: 56, bottom: 0, width: 220,
-          background: "var(--yuvist-surface)",
-          borderRight: "1px solid var(--yuvist-border)",
-          padding: "12px 8px", overflowY: "auto",
-        }}
-      >
+      {sidebarOpen && <div className="fixed inset-0 z-30 lg:hidden" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setSidebarOpen(false)} />}
+      <aside className={`fixed left-0 z-30 flex flex-col transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
+        style={{ top: 56, bottom: 0, width: 220, background: "var(--yuvist-surface)", borderRight: "1px solid var(--yuvist-border)", padding: "12px 8px", overflowY: "auto" }}>
         {navItems.map(item => (
-          <button
-            key={item.id}
-            onClick={() => navTo(item.id as Page)}
-            className={`sidebar-item ${typeof page === "string" && page === item.id ? "active" : ""}`}
-          >
-            <Icon name={item.icon as "Home"} size={20} />
-            {item.label}
+          <button key={item.id} onClick={() => navTo(item.id as Page)}
+            className={`sidebar-item ${typeof page === "string" && page === item.id ? "active" : ""}`}>
+            <Icon name={item.icon as "Home"} size={20} />{item.label}
           </button>
         ))}
-
         {currentUser && (
           <>
             <div className="my-2" style={{ height: 1, background: "var(--yuvist-border)" }} />
-            <button
-              onClick={() => navTo({ type: "channel", authorId: currentUser.id })}
-              className={`sidebar-item ${typeof page === "object" && "type" in page && page.type === "channel" && page.authorId === currentUser.id ? "active" : ""}`}
-            >
-              <Avatar src={currentUser.avatar} name={currentUser.username} size={20} />
-              Мой канал
+            <button onClick={() => navTo({ type: "channel", authorId: currentUser.id })}
+              className={`sidebar-item ${typeof page === "object" && "type" in page && page.type === "channel" && page.authorId === currentUser.id ? "active" : ""}`}>
+              <Avatar src={currentUser.avatar} name={currentUser.username} size={20} />Мой канал
             </button>
           </>
         )}
-
         {subscriptions.length > 0 && (
           <>
             <div className="my-2" style={{ height: 1, background: "var(--yuvist-border)" }} />
-            <p className="px-3 py-1 text-xs font-semibold uppercase" style={{ color: "var(--yuvist-muted)" }}>
-              Подписки
-            </p>
+            <p className="px-3 py-1 text-xs font-semibold uppercase" style={{ color: "var(--yuvist-muted)" }}>Подписки</p>
             {subscriptions.map(sid => {
               const sub = users.find(u => u.id === sid);
               if (!sub) return null;
               return (
-                <button
-                  key={sid}
-                  onClick={() => navTo({ type: "channel", authorId: sid })}
-                  className="sidebar-item"
-                >
-                  <Avatar src={sub.avatar} name={sub.username} size={20} />
-                  {sub.username}
+                <button key={sid} onClick={() => navTo({ type: "channel", authorId: sid })} className="sidebar-item">
+                  <Avatar src={sub.avatar} name={sub.username} size={20} />{sub.username}
                 </button>
               );
             })}
@@ -1433,19 +1265,12 @@ export default function Index() {
       <main className="lg:pl-56" style={{ paddingTop: 72 }}>
         <div className="p-4 sm:p-6 sm:pt-4 max-w-7xl">
 
-          {/* Search results */}
+          {/* Search */}
           {searchActive && (
             <div className="animate-fade-in">
               <div className="flex items-center justify-between mb-5">
-                <h2 className="text-lg font-bold" style={{ color: "var(--yuvist-text)" }}>
-                  Результаты: «{searchQuery}»
-                </h2>
-                <button
-                  onClick={() => { setSearchActive(false); setSearchQuery(""); }}
-                  style={{ color: "var(--yuvist-muted)" }}
-                >
-                  <Icon name="X" size={20} />
-                </button>
+                <h2 className="text-lg font-bold" style={{ color: "var(--yuvist-text)" }}>Результаты: «{searchQuery}»</h2>
+                <button onClick={() => { setSearchActive(false); setSearchQuery(""); }} style={{ color: "var(--yuvist-muted)" }}><Icon name="X" size={20} /></button>
               </div>
               {searchResults.length === 0 ? (
                 <div className="py-16 text-center">
@@ -1462,34 +1287,20 @@ export default function Index() {
 
           {!searchActive && (
             <>
-              {/* HOME */}
               {currentPageId === "home" && (
                 <div className="animate-fade-in">
                   <h2 className="text-lg font-bold mb-5" style={{ color: "var(--yuvist-text)" }}>Главная</h2>
                   {videos.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-24 text-center">
-                      <div
-                        className="w-24 h-24 rounded-full flex items-center justify-center mb-5"
-                        style={{ background: "var(--yuvist-surface)" }}
-                      >
+                      <div className="w-24 h-24 rounded-full flex items-center justify-center mb-5" style={{ background: "var(--yuvist-surface)" }}>
                         <Icon name="Play" size={40} style={{ color: "var(--yuvist-red)" }} />
                       </div>
-                      <h3 className="text-2xl font-bold mb-2" style={{ color: "var(--yuvist-text)" }}>
-                        Видео пока нет
-                      </h3>
-                      <p className="text-sm mb-6" style={{ color: "var(--yuvist-muted)" }}>
-                        Станьте первым! Загрузите своё видео на ЮВИСТ
-                      </p>
-                      {currentUser ? (
-                        <button onClick={() => setShowUpload(true)} className="yuvist-btn flex items-center gap-2">
-                          <Icon name="Upload" size={18} />
-                          Загрузить первое видео
-                        </button>
-                      ) : (
-                        <button onClick={() => setShowAuth(true)} className="yuvist-btn">
-                          Войти и загрузить
-                        </button>
-                      )}
+                      <h3 className="text-2xl font-bold mb-2" style={{ color: "var(--yuvist-text)" }}>Видео пока нет</h3>
+                      <p className="text-sm mb-6" style={{ color: "var(--yuvist-muted)" }}>Станьте первым! Загрузите своё видео на ЮВИСТ</p>
+                      {currentUser
+                        ? <button onClick={() => setShowUpload(true)} className="yuvist-btn flex items-center gap-2"><Icon name="Upload" size={18} />Загрузить первое видео</button>
+                        : <button onClick={() => setShowAuth(true)} className="yuvist-btn">Войти и загрузить</button>
+                      }
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -1499,16 +1310,13 @@ export default function Index() {
                 </div>
               )}
 
-              {/* SUBSCRIPTIONS */}
               {currentPageId === "subscriptions" && (
                 <div className="animate-fade-in">
                   <h2 className="text-lg font-bold mb-5" style={{ color: "var(--yuvist-text)" }}>Подписки</h2>
                   {!currentUser ? (
                     <div className="flex flex-col items-center py-16 text-center">
                       <Icon name="Bell" size={48} style={{ color: "var(--yuvist-muted)", marginBottom: 12 }} />
-                      <p className="mb-4" style={{ color: "var(--yuvist-muted)" }}>
-                        Войдите, чтобы видеть видео от каналов, на которые вы подписаны
-                      </p>
+                      <p className="mb-4" style={{ color: "var(--yuvist-muted)" }}>Войдите, чтобы видеть видео от каналов, на которые вы подписаны</p>
                       <button onClick={() => setShowAuth(true)} className="yuvist-btn">Войти</button>
                     </div>
                   ) : subVideos.length === 0 ? (
@@ -1524,7 +1332,6 @@ export default function Index() {
                 </div>
               )}
 
-              {/* HISTORY */}
               {currentPageId === "history" && (
                 <div className="animate-fade-in">
                   <h2 className="text-lg font-bold mb-5" style={{ color: "var(--yuvist-text)" }}>История просмотров</h2>
@@ -1541,17 +1348,13 @@ export default function Index() {
                 </div>
               )}
 
-              {/* SETTINGS */}
               {currentPageId === "settings" && (
                 currentUser ? (
                   <SettingsPage
-                    currentUser={currentUser}
-                    theme={theme}
-                    onThemeChange={setTheme}
-                    onLogout={handleLogout}
-                    onDeleteAccount={handleDeleteAccount}
+                    currentUser={currentUser} theme={theme} onThemeChange={setTheme}
+                    onLogout={handleLogout} onDeleteAccount={handleDeleteAccount}
                     onSwitchAccount={() => { handleLogout(); setTimeout(() => setShowAuth(true), 100); }}
-                    onUpdateUser={handleUpdateUser}
+                    onUpdateUser={handleUpdateUser} allVideos={videos}
                   />
                 ) : (
                   <div className="flex flex-col items-center py-16 text-center">
@@ -1562,29 +1365,22 @@ export default function Index() {
                 )
               )}
 
-              {/* VIDEO PAGE */}
               {typeof page === "object" && "type" in page && page.type === "video" && (
                 <VideoPage
                   video={videos.find(v => v.id === page.video.id) || page.video}
-                  currentUser={currentUser}
-                  allVideos={videos}
-                  onUpdate={handleVideoUpdate}
+                  currentUser={currentUser} allVideos={videos}
+                  onUpdate={v => { handleVideoUpdate(v); }}
                   onChannelClick={aid => navTo({ type: "channel", authorId: aid })}
                   onSponsor={aid => setShowSponsor(aid)}
                 />
               )}
 
-              {/* CHANNEL PAGE */}
               {typeof page === "object" && "type" in page && page.type === "channel" && (
                 <ChannelPage
-                  authorId={page.authorId}
-                  allUsers={users}
-                  allVideos={videos}
-                  currentUser={currentUser}
-                  onVideoClick={handleVideoClick}
+                  authorId={page.authorId} allUsers={users} allVideos={videos}
+                  currentUser={currentUser} onVideoClick={handleVideoClick}
                   onEditProfile={() => setShowProfile(true)}
-                  subscriptions={subscriptions}
-                  onToggleSub={handleToggleSub}
+                  subscriptions={subscriptions} onToggleSub={handleToggleSub}
                 />
               )}
             </>
@@ -1594,12 +1390,8 @@ export default function Index() {
 
       {/* MODALS */}
       {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
-      {showUpload && currentUser && (
-        <UploadModal currentUser={currentUser} onClose={() => setShowUpload(false)} onUpload={handleUpload} />
-      )}
-      {showProfile && currentUser && (
-        <ProfileEditor user={currentUser} onSave={handleUpdateUser} onClose={() => setShowProfile(false)} />
-      )}
+      {showUpload && currentUser && <UploadModal currentUser={currentUser} onClose={() => setShowUpload(false)} onUpload={handleUpload} />}
+      {showProfile && currentUser && <ProfileEditor user={currentUser} onSave={handleUpdateUser} onClose={() => setShowProfile(false)} />}
       {showSponsor && <SponsorModal author={sponsorAuthor} onClose={() => setShowSponsor(null)} />}
     </div>
   );
