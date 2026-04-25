@@ -2,91 +2,75 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url("https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;900&display=swap");
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 0 0% 6%;
+    --foreground: 0 0% 95%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card: 0 0% 9%;
+    --card-foreground: 0 0% 95%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 0 85% 55%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 0 0% 13%;
+    --secondary-foreground: 0 0% 85%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 0 0% 13%;
+    --muted-foreground: 0 0% 55%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 95%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 85% 45%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 0 0% 16%;
+    --input: 0 0% 13%;
+    --ring: 0 85% 55%;
 
-    --radius: 0.5rem;
+    --radius: 0.6rem;
 
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --yuvist-red: #e53935;
+    --yuvist-red-dark: #b71c1c;
+    --yuvist-surface: #141414;
+    --yuvist-surface2: #1e1e1e;
+    --yuvist-border: #2a2a2a;
+    --yuvist-text: #f0f0f0;
+    --yuvist-muted: #888;
   }
 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+  .light-theme {
+    --background: 0 0% 96%;
+    --foreground: 0 0% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    --primary: 0 85% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 90%;
+    --secondary-foreground: 0 0% 20%;
+    --muted: 0 0% 90%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 88%;
+    --accent-foreground: 0 0% 10%;
+    --border: 0 0% 82%;
+    --input: 0 0% 88%;
+    --ring: 0 85% 50%;
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --yuvist-red: #e53935;
+    --yuvist-red-dark: #c62828;
+    --yuvist-surface: #ffffff;
+    --yuvist-surface2: #f5f5f5;
+    --yuvist-border: #e0e0e0;
+    --yuvist-text: #111111;
+    --yuvist-muted: #666;
   }
 }
 
@@ -97,5 +81,175 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: "Golos Text", sans-serif;
+    transition:
+      background-color 0.3s ease,
+      color 0.3s ease;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--yuvist-border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--yuvist-muted);
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease forwards;
+  }
+  .animate-slide-up {
+    animation: slideUp 0.35s ease forwards;
+  }
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease forwards;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .yuvist-card {
+    background: var(--yuvist-surface);
+    border: 1px solid var(--yuvist-border);
+    border-radius: 12px;
+  }
+
+  .yuvist-input {
+    background: var(--yuvist-surface2);
+    border: 1px solid var(--yuvist-border);
+    color: var(--yuvist-text);
+    border-radius: 8px;
+    padding: 10px 14px;
+    width: 100%;
+    outline: none;
+    font-family: "Golos Text", sans-serif;
+    transition: border-color 0.2s;
+  }
+  .yuvist-input:focus {
+    border-color: var(--yuvist-red);
+  }
+
+  .yuvist-btn {
+    background: var(--yuvist-red);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-family: "Golos Text", sans-serif;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.2s,
+      transform 0.1s;
+  }
+  .yuvist-btn:hover {
+    background: var(--yuvist-red-dark);
+    transform: translateY(-1px);
+  }
+  .yuvist-btn:active {
+    transform: translateY(0);
+  }
+
+  .yuvist-btn-ghost {
+    background: transparent;
+    color: var(--yuvist-text);
+    border: 1px solid var(--yuvist-border);
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-family: "Golos Text", sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .yuvist-btn-ghost:hover {
+    background: var(--yuvist-surface2);
+    border-color: var(--yuvist-muted);
+  }
+
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--yuvist-muted);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 14px;
+  }
+  .sidebar-item:hover {
+    background: var(--yuvist-surface2);
+    color: var(--yuvist-text);
+  }
+  .sidebar-item.active {
+    background: rgba(229, 57, 53, 0.12);
+    color: var(--yuvist-red);
+  }
+
+  .video-card {
+    cursor: pointer;
+    transition:
+      transform 0.2s,
+      box-shadow 0.2s;
+  }
+  .video-card:hover {
+    transform: translateY(-3px);
+  }
+  .video-card:hover .video-thumb {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  .video-thumb {
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 16/9;
+    background: var(--yuvist-surface2);
+    transition: box-shadow 0.2s;
+  }
+
+  .nav-glass {
+    background: rgba(10, 10, 10, 0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--yuvist-border);
+  }
+
+  .light-theme .nav-glass {
+    background: rgba(255, 255, 255, 0.92);
   }
 }
